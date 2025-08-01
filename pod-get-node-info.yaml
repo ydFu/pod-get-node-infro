@@ -1,0 +1,151 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: node-info
+  namespace: demo  
+spec:
+  schedule: "* */1 * * *"
+  jobTemplate:
+    spec:
+      parallelism: 1  # by your node count
+      completions: 1  # by your node count
+      template:
+        metadata:
+          labels:
+            cronjob-name: node-info
+        spec:
+          serviceAccountName: node-command-executor-sa
+          hostPID: true
+          affinity:
+            podAntiAffinity:
+              requiredDuringSchedulingIgnoredDuringExecution:
+              - labelSelector:
+                  matchExpressions:
+                  - key: cronjob-name
+                    operator: In
+                    values:
+                    - node-info
+                topologyKey: "kubernetes.io/hostname"
+          tolerations:
+          - key: node-role.kubernetes.io/master
+            operator: Exists
+            effect: NoSchedule
+          - key: node-role.kubernetes.io/infra
+            operator: Exists
+            effect: NoSchedule
+          containers:
+          - name: get-sysinfo-log
+            image: spiqyq.nat.fia.gov.tw/redhat/ubi:latest
+            args:
+              - /bin/sh
+              - '-c'
+              - >
+                TZ=Asia/Taipei;
+                LOGFILE=/mnt/logs/node_${MY_NODE_NAME}_sysinfo_$(date +'%Y-%m-%d_%H:%M:%S').log;
+                echo "===== System Info on Node: $MY_NODE_NAME =====" > $LOGFILE;
+                echo "Hostname: $(hostname)" >> $LOGFILE;
+                echo "Uptime:" >> $LOGFILE;
+                uptime >> $LOGFILE;
+                echo "" >> $LOGFILE;
+                echo "Users Currently Logged In (who):" >> $LOGFILE;
+                who >> $LOGFILE;
+                echo "" >> $LOGFILE;
+                echo "CPU & Memory Usage (top):" >> $LOGFILE;
+                top -b -n 1 | head -n 20 >> $LOGFILE;
+                echo "" >> $LOGFILE;
+                echo "Disk Usage (df -h):" >> $LOGFILE;
+                df -h >> $LOGFILE;
+                echo "" >> $LOGFILE;
+                echo "===== Pod Metadata =====" >> $LOGFILE;
+                echo "Node: $MY_NODE_NAME" >> $LOGFILE;
+                echo "Node IP: $NODE_IP" >> $LOGFILE;
+                echo "Pod: $POD_NAME" >> $LOGFILE;
+                echo "Namespace: $POD_NAMESPACE" >> $LOGFILE;
+                echo "Pod IP: $POD_IP" >> $LOGFILE;
+                sleep 300
+            env:
+              - name: MY_NODE_NAME
+                valueFrom:
+                  fieldRef:
+                    apiVersion: v1
+                    fieldPath: spec.nodeName
+              - name: POD_NAME
+                valueFrom:
+                  fieldRef:
+                    apiVersion: v1
+                    fieldPath: metadata.name
+              - name: POD_NAMESPACE
+                valueFrom:
+                  fieldRef:
+                    apiVersion: v1
+                    fieldPath: metadata.namespace
+              - name: POD_IP
+                valueFrom:
+                  fieldRef:
+                    apiVersion: v1
+                    fieldPath: status.podIP
+              - name: NODE_IP
+                valueFrom:
+                  fieldRef:
+                    apiVersion: v1
+                    fieldPath: status.hostIP
+            volumeMounts:
+            - name: log-storage
+              mountPath: /mnt/logs
+          volumes:
+          - name: log-storage
+            persistentVolumeClaim:
+              claimName: nfs-log-pvc
+          restartPolicy: Never
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: node-command-executor-sa
+  namespace: demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: allow-privileged-scc-for-node-executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:openshift:scc:privileged
+subjects:
+- kind: ServiceAccount
+  name: node-command-executor-sa
+  namespace: demo
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: nfs-log-pv
+spec:
+  accessModes:
+  - ReadWriteOnce
+  capacity:
+    storage: 10Gi
+  claimRef:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    name: nfs-log-pvc
+    namespace: demo
+  nfs:
+    path: /os_downtime_logs
+    server: 10.190.33.171
+  persistentVolumeReclaimPolicy: Retain
+  volumeMode: Filesystem
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-log-pvc
+  namespace: demo  
+spec:
+  accessModes:
+    - ReadWriteOnce  
+  resources:
+    requests:
+      storage: 10Gi
+  volumeName: nfs-log-pv  
