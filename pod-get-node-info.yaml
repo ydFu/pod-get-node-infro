@@ -14,7 +14,7 @@ spec:
           labels:
             cronjob-name: node-info
         spec:
-          serviceAccountName: node-command-executor-sa
+          serviceAccountName: node-command-exec-sa
           hostPID: true
           affinity:
             podAntiAffinity:
@@ -35,7 +35,7 @@ spec:
             effect: NoSchedule
           containers:
           - name: get-sysinfo-log
-            image: spiqyq.nat.fia.gov.tw/redhat/ubi:latest
+            image: registry.redhat.io/ubi9/ubi-init@sha256:62f63f11ac9307061a2b2e86a4a8a7792f40de773558993f297ad3ea805ba9b8
             args:
               - /bin/sh
               - '-c'
@@ -62,7 +62,7 @@ spec:
                 echo "Pod: $POD_NAME" >> $LOGFILE;
                 echo "Namespace: $POD_NAMESPACE" >> $LOGFILE;
                 echo "Pod IP: $POD_IP" >> $LOGFILE;
-                sleep 300
+                last -F -f /mnt/wtmp > /mnt/logs/node_$(MY_NODE_NAME).log;
             env:
               - name: MY_NODE_NAME
                 valueFrom:
@@ -92,16 +92,23 @@ spec:
             volumeMounts:
             - name: log-storage
               mountPath: /mnt/logs
+            - name: wtmp-file
+              readOnly: true
+              mountPath: /mnt/wtmp
           volumes:
           - name: log-storage
             persistentVolumeClaim:
               claimName: nfs-log-pvc
+          - name: wtmp-file
+            hostPath:
+              path: /var/log/wtmp
+              type: 'File'
           restartPolicy: Never
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: node-command-executor-sa
+  name: node-command-exec-sa
   namespace: demo
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -114,7 +121,7 @@ roleRef:
   name: system:openshift:scc:privileged
 subjects:
 - kind: ServiceAccount
-  name: node-command-executor-sa
+  name: node-command-exec-sa
   namespace: demo
 ---
 apiVersion: v1
@@ -133,7 +140,7 @@ spec:
     namespace: demo
   nfs:
     path: /os_downtime_logs
-    server: 10.190.33.171
+    server: 10.190.8.8
   persistentVolumeReclaimPolicy: Retain
   volumeMode: Filesystem
 ---
@@ -147,5 +154,5 @@ spec:
     - ReadWriteOnce  
   resources:
     requests:
-      storage: 10Gi
+      storage: 5Gi
   volumeName: nfs-log-pv  
